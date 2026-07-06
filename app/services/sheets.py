@@ -28,8 +28,20 @@ async def sync_order_to_sheet(order_payload: dict) -> None:
         "currency": order_payload["sheet_currency"],
         "status": order_payload["sheet_status"],
     }
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         response = await client.post(settings.google_sheets_webhook_url, json=payload)
         if response.status_code >= 400:
             logger.warning("sheet_sync_failed", extra={"status": response.status_code})
             response.raise_for_status()
+
+        # Apps Script's ContentService almost always answers with HTTP 200
+        # even when the script itself failed, so a 2xx status code alone is
+        # not proof of success. Check the JSON body's "ok" flag too.
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+
+        if body is not None and body.get("ok") is False:
+            logger.warning("sheet_sync_failed", extra={"body": body})
+            raise RuntimeError(f"sheet webhook returned ok=false: {body}")
