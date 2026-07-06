@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -15,7 +16,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://solyra:solyra@localhost:5432/solyra"
     alembic_database_url: str = "postgresql://solyra:solyra@localhost:5432/solyra"
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # NoDecode stops pydantic-settings from trying to JSON-parse this env var
+    # before our validator runs. Without it, a raw comma-separated string (or
+    # one accidentally wrapped in brackets, e.g. "[a,b]") is invalid JSON and
+    # crashes the app at startup instead of being parsed below.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     google_sheets_webhook_url: str | None = None
     google_sheets_webhook_secret: str | None = None
@@ -43,7 +48,13 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            # tolerate accidental wrapping like "[a,b]" or quotes/whitespace
+            cleaned = value.strip().strip("[]")
+            return [
+                item.strip().strip("'\"")
+                for item in cleaned.split(",")
+                if item.strip().strip("'\"")
+            ]
         return value
 
 
