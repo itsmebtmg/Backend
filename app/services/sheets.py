@@ -13,10 +13,20 @@ async def sync_order_to_sheet(order_payload: dict) -> None:
     if not settings.enable_google_sheets or not settings.google_sheets_webhook_url:
         return
 
+    # Flat, simple payload matching the columns expected by
+    # docs/google-apps-script/orders-webhook.js. No secret required: the
+    # webhook URL itself (Apps Script "Anyone" access) is the only guard.
     payload = {
-        "secret": settings.google_sheets_webhook_secret,
-        "type": "order_created",
-        "order": order_payload,
+        "date": order_payload["sheet_date"],
+        "order_id": order_payload["sheet_order_id"],
+        "country": order_payload["sheet_country"],
+        "name": order_payload["sheet_name"],
+        "phone": order_payload["sheet_phone"],
+        "product": order_payload["sheet_product"],
+        "quantity": order_payload["sheet_quantity"],
+        "total_price": order_payload["sheet_total_price"],
+        "currency": order_payload["sheet_currency"],
+        "status": order_payload["sheet_status"],
     }
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(settings.google_sheets_webhook_url, json=payload)

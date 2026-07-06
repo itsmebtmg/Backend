@@ -130,7 +130,7 @@ async def update_order_status(
 async def _generate_unique_order_number(session: AsyncSession) -> str:
     today = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
     for _ in range(20):
-        candidate = f"SLY-{today}-{random.randint(1000, 9999)}"
+        candidate = f"Solyra-{today}-{random.randint(1000, 9999)}"
         exists = await session.scalar(select(Order.id).where(Order.order_number == candidate))
         if not exists:
             return candidate
@@ -161,6 +161,8 @@ def _order_payload(order: Order, items: list[OrderItem]) -> dict:
         f"{'FREE' if item['is_free_gift'] else str(item['unit_price_mad']) + ' MAD'}"
         for item in items_payload
     )
+    created_at = order.created_at or datetime.now(tz=timezone.utc)
+
     return {
         "order_number": order.order_number,
         "created_at": order.created_at.isoformat() if order.created_at else None,
@@ -190,4 +192,15 @@ def _order_payload(order: Order, items: list[OrderItem]) -> dict:
         "snap_click_id": order.snap_click_id,
         "client_user_agent": order.client_user_agent,
         "client_ip": str(order.client_ip) if order.client_ip else None,
+        # Simplified fields for the Google Sheet webhook (docs/google-apps-script/orders-webhook.js)
+        "sheet_date": created_at.strftime("%d/%m/%Y"),
+        "sheet_order_id": order.order_number,
+        "sheet_country": "Morocco",
+        "sheet_name": order.customer_name,
+        "sheet_phone": order.phone_local,
+        "sheet_product": "/".join(item["name"] for item in items_payload),
+        "sheet_quantity": "/".join(str(item["quantity"]) for item in items_payload),
+        "sheet_total_price": order.total_mad,
+        "sheet_currency": "MAD",
+        "sheet_status": "",
     }

@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     google_sheets_webhook_url: str | None = None
-    google_sheets_webhook_secret: str | None = None
 
     meta_pixel_id: str | None = None
     meta_access_token: str | None = None
