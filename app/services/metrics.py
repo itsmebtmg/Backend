@@ -6,14 +6,17 @@ traffic never inflates it.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Order, OrderItem, Shipment, SiteVisit
 from app.schemas.admin import BreakdownItemOut, DailyPointOut, MetricsSummaryOut, MetricsTimeseriesOut
+
+log = logging.getLogger(__name__)
 
 CONFIRMED_LIKE_STATUSES = {"confirmed", "delivered", "returned"}
 
@@ -24,59 +27,95 @@ def _range_bounds(date_from: date, date_to: date) -> tuple[datetime, datetime]:
     return start, end
 
 
+async def _table_exists(session: AsyncSession, table_name: str) -> bool:
+    result = await session.execute(
+        text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :t)"),
+        {"t": table_name},
+    )
+    return result.scalar() or False
+
+
 async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> MetricsSummaryOut:
     start, end = _range_bounds(date_from, date_to)
 
-    clicks_row = (
-        await session.execute(
-            select(
-                func.count().filter(SiteVisit.event_type == "page_view"),
-                func.count().filter(SiteVisit.event_type == "cta_click"),
-            ).where(
-                SiteVisit.created_at.between(start, end),
-                SiteVisit.is_valid_ma.is_(True),
+    has_visits = await _table_exists(session, "site_visits")
+    has_shipments = await _table_exists(session, "shipments")
+
+    if has_visits:
+        clicks_row = (
+            await session.execute(
+                select(
+                    func.count().filter(SiteVisit.event_type == "page_view"),
+                    func.count().filter(SiteVisit.event_type == "cta_click"),
+                ).where(
+                    SiteVisit.created_at.between(start, end),
+                    SiteVisit.is_valid_ma.is_(True),
+                )
             )
-        )
-    ).one()
-    page_views, cta_clicks = clicks_row
+        ).one()
+        page_views, cta_clicks = clicks_row
+    else:
+        log.warning("site_visits table missing — run 'alembic upgrade head'")
+        page_views, cta_clicks = 0, 0
     clicks = page_views + cta_clicks
 
-    orders_row = (
-        await session.execute(
-            select(
-                func.count(),
-                func.count().filter(Order.is_valid_ma.is_(True)),
-                func.coalesce(func.sum(Order.total_mad), 0),
-                func.count().filter(Order.confirmed_at.is_not(None)),
-                func.count().filter(Order.status == "canceled"),
-                func.count().filter(Order.status == "no_answer"),
-                func.count().filter(Order.upsell_accepted.is_(True)),
-            ).where(Order.created_at.between(start, end))
-        )
-    ).one()
-    (
-        orders,
-        valid_orders,
-        revenue_mad,
-        confirmed_orders,
-        canceled_orders,
-        no_answer_orders,
-        upsell_orders,
-    ) = orders_row
-
-    shipment_row = (
-        await session.execute(
-            select(
-                func.count().filter(Shipment.delivery_status == "delivered"),
-                func.count().filter(Shipment.delivery_status == "returned"),
-                func.count().filter(Shipment.delivery_status == "in_transit"),
-                func.count().filter(Shipment.delivery_status == "pending"),
+    try:
+        orders_row = (
+            await session.execute(
+                select(
+                    func.count(),
+                    func.count().filter(Order.is_valid_ma.is_(True)),
+                    func.coalesce(func.sum(Order.total_mad), 0),
+                    func.count().filter(Order.confirmed_at.is_not(None)),
+                    func.count().filter(Order.status == "canceled"),
+                    func.count().filter(Order.status == "no_answer"),
+                    func.count().filter(Order.upsell_accepted.is_(True)),
+                ).where(Order.created_at.between(start, end))
             )
-            .join(Order, Order.id == Shipment.order_id)
-            .where(Order.created_at.between(start, end))
-        )
-    ).one()
-    delivered_orders, returned_orders, in_transit_orders, pending_shipment_orders = shipment_row
+        ).one()
+        (
+            orders,
+            valid_orders,
+            revenue_mad,
+            confirmed_orders,
+            canceled_orders,
+            no_answer_orders,
+            upsell_orders,
+        ) = orders_row
+    except Exception:
+        await session.rollback()
+        log.warning("orders query with is_valid_ma/confirmed_at failed — columns may be missing")
+        fallback = (
+            await session.execute(
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(Order.total_mad), 0),
+                    func.count().filter(Order.status == "canceled"),
+                    func.count().filter(Order.status == "no_answer"),
+                    func.count().filter(Order.upsell_accepted.is_(True)),
+                ).where(Order.created_at.between(start, end))
+            )
+        ).one()
+        orders, revenue_mad, canceled_orders, no_answer_orders, upsell_orders = fallback
+        valid_orders, confirmed_orders = 0, 0
+
+    if has_shipments:
+        shipment_row = (
+            await session.execute(
+                select(
+                    func.count().filter(Shipment.delivery_status == "delivered"),
+                    func.count().filter(Shipment.delivery_status == "returned"),
+                    func.count().filter(Shipment.delivery_status == "in_transit"),
+                    func.count().filter(Shipment.delivery_status == "pending"),
+                )
+                .join(Order, Order.id == Shipment.order_id)
+                .where(Order.created_at.between(start, end))
+            )
+        ).one()
+        delivered_orders, returned_orders, in_transit_orders, pending_shipment_orders = shipment_row
+    else:
+        log.warning("shipments table missing — run 'alembic upgrade head'")
+        delivered_orders, returned_orders, in_transit_orders, pending_shipment_orders = 0, 0, 0, 0
 
     status_rows = (
         await session.execute(
@@ -156,17 +195,21 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
 async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) -> MetricsTimeseriesOut:
     start, end = _range_bounds(date_from, date_to)
 
-    click_rows = (
-        await session.execute(
-            select(
-                func.date(SiteVisit.created_at),
-                func.count().filter(SiteVisit.event_type == "page_view"),
-                func.count().filter(SiteVisit.event_type == "cta_click"),
+    has_visits = await _table_exists(session, "site_visits")
+    if has_visits:
+        click_rows = (
+            await session.execute(
+                select(
+                    func.date(SiteVisit.created_at),
+                    func.count().filter(SiteVisit.event_type == "page_view"),
+                    func.count().filter(SiteVisit.event_type == "cta_click"),
+                )
+                .where(SiteVisit.created_at.between(start, end), SiteVisit.is_valid_ma.is_(True))
+                .group_by(func.date(SiteVisit.created_at))
             )
-            .where(SiteVisit.created_at.between(start, end), SiteVisit.is_valid_ma.is_(True))
-            .group_by(func.date(SiteVisit.created_at))
-        )
-    ).all()
+        ).all()
+    else:
+        click_rows = []
 
     order_rows = (
         await session.execute(
