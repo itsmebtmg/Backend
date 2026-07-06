@@ -34,7 +34,32 @@ async def summary(
         return await metrics_service.get_summary(session, resolved_from, resolved_to)
     except Exception as exc:
         log.exception("metrics summary failed")
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+        return MetricsSummaryOut(
+            date_from=resolved_from,
+            date_to=resolved_to,
+            clicks=0,
+            page_views=0,
+            cta_clicks=0,
+            orders=0,
+            valid_orders=0,
+            revenue_mad=0,
+            aov_mad=0,
+            conversion_rate=0,
+            confirmation_rate=0,
+            delivery_rate=0,
+            upsell_rate=0,
+            confirmed_orders=0,
+            canceled_orders=0,
+            no_answer_orders=0,
+            delivered_orders=0,
+            returned_orders=0,
+            in_transit_orders=0,
+            pending_shipment_orders=0,
+            by_status=[],
+            top_cities=[],
+            top_sources=[],
+            top_products=[],
+        )
 
 
 @router.get("/timeseries", response_model=MetricsTimeseriesOut)
@@ -49,4 +74,4 @@ async def timeseries(
         return await metrics_service.get_timeseries(session, resolved_from, resolved_to)
     except Exception as exc:
         log.exception("metrics timeseries failed")
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+        return MetricsTimeseriesOut(date_from=resolved_from, date_to=resolved_to, points=[])
