@@ -50,12 +50,26 @@ class Order(Base):
     upsell_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
 
+    # Set the first time status transitions to "confirmed" — the source of
+    # truth for the admin dashboard's confirmation rate, independent of
+    # whatever the order's *current* status later becomes (delivered, etc).
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Server-side geo/VPN verdict computed at order-creation time (MaxMind),
+    # mirroring the check already done client-side in the storefront's
+    # submitOrder action. Used to flag/filter suspicious orders in reporting
+    # without blocking checkout a second time.
+    geo_country: Mapped[str | None] = mapped_column(String(2))
+    is_valid_ma: Mapped[bool | None] = mapped_column(Boolean)
+    is_vpn: Mapped[bool | None] = mapped_column(Boolean)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    shipment: Mapped["Shipment | None"] = relationship(back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -99,3 +113,67 @@ class TrackingEvent(Base):
     response_body: Mapped[str | None] = mapped_column(Text)
     success: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SiteVisit(Base):
+    """A single storefront page view or CTA click, used to compute clicks and
+    conversion rate on the admin dashboard. Only rows with is_valid_ma=True and
+    is_vpn=False are counted as "clicks" — everything else is kept for
+    auditing/debugging but excluded from reported metrics.
+    """
+
+    __tablename__ = "site_visits"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_type: Mapped[str] = mapped_column(String(20), index=True)  # page_view | cta_click
+    session_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    path: Mapped[str | None] = mapped_column(Text)
+    source_page: Mapped[str | None] = mapped_column(Text)
+    referrer: Mapped[str | None] = mapped_column(Text)
+
+    utm_source: Mapped[str | None] = mapped_column(String(120))
+    utm_medium: Mapped[str | None] = mapped_column(String(120))
+    utm_campaign: Mapped[str | None] = mapped_column(String(160))
+    utm_content: Mapped[str | None] = mapped_column(String(160))
+    utm_term: Mapped[str | None] = mapped_column(String(160))
+
+    fbp: Mapped[str | None] = mapped_column(Text)
+    fbc: Mapped[str | None] = mapped_column(Text)
+    ttclid: Mapped[str | None] = mapped_column(Text)
+    ttp: Mapped[str | None] = mapped_column(Text)
+    snap_click_id: Mapped[str | None] = mapped_column(Text)
+
+    client_ip: Mapped[str | None] = mapped_column(INET)
+    client_user_agent: Mapped[str | None] = mapped_column(Text)
+    country_iso: Mapped[str | None] = mapped_column(String(2))
+    is_valid_ma: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_vpn: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Shipment(Base):
+    """Delivery tracking for an order. delivery_status is edited manually by
+    the admin today; once a shipping-company API is wired in (see
+    app/services/shipping.py), it can be synced automatically instead.
+    """
+
+    __tablename__ = "shipments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    carrier: Mapped[str | None] = mapped_column(String(80))
+    tracking_number: Mapped[str | None] = mapped_column(String(120))
+    delivery_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    cod_amount_mad: Mapped[int | None] = mapped_column(Integer)
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    order: Mapped[Order] = relationship(back_populates="shipment")

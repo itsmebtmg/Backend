@@ -43,6 +43,27 @@ class Settings(BaseSettings):
     rate_limit_orders_per_ip_per_hour: int = 10
     rate_limit_orders_per_phone_per_day: int = 3
 
+    # --- Admin dashboard -------------------------------------------------
+    admin_username: str = "admin"
+    admin_password: str = "change-me"
+    jwt_secret_key: str = "insecure-dev-secret-change-me"
+    jwt_expire_minutes: int = 60 * 12
+    admin_cookie_name: str = "solyra_admin_session"
+    admin_cookie_secure: bool = True
+
+    # --- Geo / VPN detection (MaxMind GeoIP2 web service) ----------------
+    maxmind_account_id: str | None = None
+    maxmind_license_key: str | None = None
+    geo_cache_ttl_seconds: int = 3600
+
+    # --- Shipping / delivery ----------------------------------------------
+    # No provider is wired in yet — delivery_status is edited manually by an
+    # admin. Fill these in once the shipping company's API is available and
+    # implement a matching provider in app/services/shipping.py.
+    shipping_provider: str = "manual"
+    shipping_api_base_url: str | None = None
+    shipping_api_key: str | None = None
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: str | list[str]) -> list[str]:

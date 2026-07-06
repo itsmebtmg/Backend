@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Order, OrderEvent, OrderItem, TrackingEvent
 from app.schemas.orders import OrderCreate
+from app.services import geo
 from app.services.offers import validate_and_price_order
 from app.services.phone import InvalidMoroccanPhone, normalize_moroccan_phone
 from app.services.sheets import sync_order_to_sheet
@@ -26,6 +27,7 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
     items, subtotal_mad, discount_mad, total_mad = validate_and_price_order(payload)
     order_number = await _generate_unique_order_number(session)
     client_ip = _client_ip(request)
+    geo_verdict = await geo.check_ip(client_ip)
 
     order = Order(
         order_number=order_number,
@@ -53,6 +55,9 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
         client_ip=client_ip,
         event_id=payload.event_id,
         upsell_accepted=payload.offer.upsell_accepted,
+        geo_country=geo_verdict.country_iso,
+        is_valid_ma=geo_verdict.is_valid_ma,
+        is_vpn=geo_verdict.is_vpn,
     )
     session.add(order)
     await session.flush()
@@ -121,6 +126,8 @@ async def update_order_status(
         raise HTTPException(status_code=404, detail="order_not_found")
     order.status = status
     order.notes = notes
+    if status == "confirmed" and order.confirmed_at is None:
+        order.confirmed_at = datetime.now(tz=timezone.utc)
     session.add(OrderEvent(order_id=order.id, event_type=status, event_data={"notes": notes}))
     await session.commit()
     await session.refresh(order)
