@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+COPY . .
 RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir .
 
-COPY . .
 RUN chmod +x ./scripts/entrypoint.sh
 
 EXPOSE 8000
