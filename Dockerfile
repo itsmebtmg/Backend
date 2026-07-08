@@ -8,6 +8,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    dos2unix \
   && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
@@ -15,7 +16,7 @@ COPY . .
 RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir .
 
-RUN chmod +x ./scripts/entrypoint.sh
+RUN dos2unix ./scripts/entrypoint.sh && chmod +x ./scripts/entrypoint.sh
 
 EXPOSE 8000
 CMD ["./scripts/entrypoint.sh"]
