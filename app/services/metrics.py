@@ -136,11 +136,17 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
         )
     ).all()
 
+    # Reuse a single labeled expression for both SELECT and GROUP BY: two
+    # separately-constructed func.coalesce(...) calls bind their "direct"
+    # literal as distinct parameters, which Postgres treats as different
+    # expressions and rejects with a GroupingError even though the SQL text
+    # looks identical.
+    source_expr = func.coalesce(Order.source_page, "direct").label("source_label")
     source_rows = (
         await session.execute(
-            select(func.coalesce(Order.source_page, "direct"), func.count())
+            select(source_expr, func.count())
             .where(Order.created_at.between(start, end))
-            .group_by(func.coalesce(Order.source_page, "direct"))
+            .group_by(source_expr)
             .order_by(func.count().desc())
             .limit(8)
         )
