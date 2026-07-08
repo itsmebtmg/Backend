@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     google_sheets_webhook_url: str | None = None
+    # Shared secret the Google Apps Script "Status" onEdit trigger must send
+    # back to /v1/orders/sheet-status so anyone with the endpoint URL can't
+    # tamper with order statuses.
+    order_webhook_secret: str | None = None
 
     meta_pixel_id: str | None = None
     meta_access_token: str | None = None

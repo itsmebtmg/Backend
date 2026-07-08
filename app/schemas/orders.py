@@ -55,6 +55,15 @@ class OrderStatusUpdate(BaseModel):
     notes: str | None = None
 
 
+class SheetStatusUpdate(BaseModel):
+    """Payload sent by the Google Apps Script onEdit trigger whenever the
+    ops team edits the "Status" column (Confirmé, appel 1, annulé, ...)."""
+
+    order_id: str = Field(min_length=1, max_length=64)
+    status: str = Field(min_length=1, max_length=64)
+    secret: str | None = None
+
+
 class HealthResponse(BaseModel):
     ok: bool = True
     service: str = "solyra-api"

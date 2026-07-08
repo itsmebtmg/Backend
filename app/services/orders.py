@@ -1,4 +1,5 @@
 import random
+import unicodedata
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
@@ -12,6 +13,36 @@ from app.services.offers import validate_and_price_order
 from app.services.phone import InvalidMoroccanPhone, normalize_moroccan_phone
 from app.services.sheets import sync_order_to_sheet
 from app.services.tracking.dispatcher import send_purchase_events
+
+# Maps the exact labels used in the Google Sheet "Status" dropdown (see the
+# data-validation rule the ops team set on the column) to our canonical
+# `Order.status` values (see ORDER_STATUSES in app/schemas/admin.py). Keys are
+# normalized (lowercased, accents stripped) before lookup so "Confirmé",
+# "confirme" and "CONFIRMÉ" all match the same entry.
+SHEET_STATUS_MAP: dict[str, str] = {
+    "confirme": "confirmed",
+    "appel 1": "no_answer",
+    "appel 2": "no_answer",
+    "appel 3": "no_answer",
+    "appel 4": "no_answer",
+    "reporte": "postponed",
+    "plus tard": "postponed",
+    "faux numero": "canceled",
+    "double": "canceled",
+    "annule": "canceled",
+    "rappel": "postponed",
+}
+
+
+def _normalize_sheet_label(raw: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", raw.strip().lower())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def map_sheet_status(raw_status: str) -> str | None:
+    """Translate a raw Google Sheet status label to a canonical order status,
+    or None if the label isn't recognized (e.g. the cell was cleared)."""
+    return SHEET_STATUS_MAP.get(_normalize_sheet_label(raw_status))
 
 
 async def create_order(session: AsyncSession, payload: OrderCreate, request: Request) -> Order:
@@ -129,6 +160,35 @@ async def update_order_status(
     if status == "confirmed" and order.confirmed_at is None:
         order.confirmed_at = datetime.now(tz=timezone.utc)
     session.add(OrderEvent(order_id=order.id, event_type=status, event_data={"notes": notes}))
+    await session.commit()
+    await session.refresh(order)
+    return order
+
+
+async def apply_sheet_status(session: AsyncSession, order_number: str, raw_status: str) -> Order:
+    """Handle a Status-column edit coming from the Google Sheet. Maps the raw
+    French label to a canonical status, applies it via update_order_status,
+    and records the original label so it stays visible in the admin timeline."""
+    canonical = map_sheet_status(raw_status)
+    if canonical is None:
+        raise HTTPException(status_code=422, detail="unrecognized_sheet_status")
+
+    order = await session.scalar(select(Order).where(Order.order_number == order_number))
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    notes = f"Sheet: \"{raw_status.strip()}\""
+    order.status = canonical
+    order.notes = notes
+    if canonical == "confirmed" and order.confirmed_at is None:
+        order.confirmed_at = datetime.now(tz=timezone.utc)
+    session.add(
+        OrderEvent(
+            order_id=order.id,
+            event_type=f"sheet_status:{canonical}",
+            event_data={"raw_status": raw_status, "notes": notes},
+        )
+    )
     await session.commit()
     await session.refresh(order)
     return order
