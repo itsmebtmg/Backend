@@ -66,7 +66,7 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
                     func.count(),
                     func.count().filter(Order.is_valid_ma.is_(True)),
                     func.coalesce(func.sum(Order.total_mad), 0),
-                    func.count().filter(Order.confirmed_at.is_not(None)),
+                    func.count().filter(Order.status.in_(CONFIRMED_LIKE_STATUSES)),
                     func.count().filter(Order.status == "canceled"),
                     func.count().filter(Order.status == "no_answer"),
                     func.count().filter(Order.upsell_accepted.is_(True)),

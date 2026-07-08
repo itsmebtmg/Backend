@@ -50,9 +50,8 @@ class Order(Base):
     upsell_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
 
-    # Set the first time status transitions to "confirmed" — the source of
-    # truth for the admin dashboard's confirmation rate, independent of
-    # whatever the order's *current* status later becomes (delivered, etc).
+    # First time status transitions to "confirmed" — kept for order history
+    # in the admin UI. Dashboard KPIs count confirmed orders by current status.
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Server-side geo/VPN verdict computed at order-creation time (MaxMind),
