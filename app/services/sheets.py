@@ -10,6 +10,15 @@ logger = logging.getLogger(__name__)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=4))
 async def sync_order_to_sheet(order_payload: dict) -> None:
+    await _post_sheet_payload(order_payload, action="append")
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=4))
+async def sync_order_update_to_sheet(order_payload: dict) -> None:
+    await _post_sheet_payload(order_payload, action="update")
+
+
+async def _post_sheet_payload(order_payload: dict, *, action: str) -> None:
     if not settings.enable_google_sheets or not settings.google_sheets_webhook_url:
         return
 
@@ -17,6 +26,7 @@ async def sync_order_to_sheet(order_payload: dict) -> None:
     # docs/google-apps-script/orders-webhook.js. No secret required: the
     # webhook URL itself (Apps Script "Anyone" access) is the only guard.
     payload = {
+        "action": action,
         "date": order_payload["sheet_date"],
         "order_id": order_payload["sheet_order_id"],
         "country": order_payload["sheet_country"],

@@ -3,15 +3,16 @@ import unicodedata
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import Order, OrderEvent, OrderItem, TrackingEvent
 from app.schemas.orders import OrderCreate
 from app.services import geo
 from app.services.offers import validate_and_price_order
 from app.services.phone import InvalidMoroccanPhone, normalize_moroccan_phone
-from app.services.sheets import sync_order_to_sheet
+from app.services.sheets import sync_order_to_sheet, sync_order_update_to_sheet
 from app.services.tracking.dispatcher import send_purchase_events
 
 # Maps the exact labels used in the Google Sheet "Status" dropdown (see the
@@ -46,8 +47,18 @@ def map_sheet_status(raw_status: str) -> str | None:
 
 
 async def create_order(session: AsyncSession, payload: OrderCreate, request: Request) -> Order:
-    existing = await session.scalar(select(Order).where(Order.event_id == payload.event_id))
+    phase = payload.checkout_phase
+    existing = await session.scalar(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.event_id == payload.event_id)
+    )
+
     if existing:
+        if phase == "upsell_pending":
+            return existing
+        if phase == "final":
+            return await _finalize_order(session, existing, payload, request)
         return existing
 
     try:
@@ -59,10 +70,11 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
     order_number = await _generate_unique_order_number(session)
     client_ip = _client_ip(request)
     geo_verdict = await geo.check_ip(client_ip)
+    initial_status = "upsell_pending" if phase == "upsell_pending" else "new"
 
     order = Order(
         order_number=order_number,
-        status="new",
+        status=initial_status,
         customer_name=payload.customer.name.strip(),
         phone_raw=payload.customer.phone,
         phone_local=phone["local"],
@@ -93,11 +105,84 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
     session.add(order)
     await session.flush()
 
+    order_items = _build_order_items(session, order.id, items)
+    session.add(
+        OrderEvent(
+            order_id=order.id,
+            event_type="created",
+            event_data={"total_mad": total_mad, "checkout_phase": phase},
+        )
+    )
+    await session.commit()
+    await session.refresh(order)
+
+    order_payload = _order_payload(order, order_items)
+    await _sync_sheet(session, order, order_payload, is_update=False)
+
+    if phase == "final":
+        await _send_capi_once(session, order, order_payload, phone)
+
+    return order
+
+
+async def _finalize_order(
+    session: AsyncSession, order: Order, payload: OrderCreate, request: Request
+) -> Order:
+    try:
+        phone = normalize_moroccan_phone(payload.customer.phone)
+    except InvalidMoroccanPhone as exc:
+        raise HTTPException(status_code=422, detail="invalid_moroccan_phone") from exc
+
+    items, subtotal_mad, discount_mad, total_mad = validate_and_price_order(payload)
+
+    order.customer_name = payload.customer.name.strip()
+    order.phone_raw = payload.customer.phone
+    order.phone_local = phone["local"]
+    order.phone_e164 = phone["e164"]
+    order.phone_digits = phone["digits_international"]
+    order.city = payload.customer.city.strip()
+    order.address = payload.customer.address.strip()
+    order.subtotal_mad = subtotal_mad
+    order.discount_mad = discount_mad
+    order.total_mad = total_mad
+    order.upsell_accepted = payload.offer.upsell_accepted
+    order.status = "new"
+    order.fbp = payload.tracking.fbp or order.fbp
+    order.fbc = payload.tracking.fbc or order.fbc
+    order.ttclid = payload.tracking.ttclid or order.ttclid
+    order.ttp = payload.tracking.ttp or order.ttp
+    order.snap_click_id = payload.tracking.snap_click_id or order.snap_click_id
+    order.client_user_agent = (
+        payload.tracking.client_user_agent
+        or request.headers.get("user-agent")
+        or order.client_user_agent
+    )
+
+    await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+    order_items = _build_order_items(session, order.id, items)
+    session.add(
+        OrderEvent(
+            order_id=order.id,
+            event_type="finalized",
+            event_data={"total_mad": total_mad, "upsell_accepted": payload.offer.upsell_accepted},
+        )
+    )
+    await session.commit()
+    await session.refresh(order)
+
+    order_payload = _order_payload(order, order_items)
+    await _sync_sheet(session, order, order_payload, is_update=True)
+    await _send_capi_once(session, order, order_payload, phone)
+
+    return order
+
+
+def _build_order_items(session: AsyncSession, order_id, items) -> list[OrderItem]:
     order_items: list[OrderItem] = []
     for item in items:
         line_total = 0 if item.is_free_gift else item.unit_price_mad * item.quantity
         db_item = OrderItem(
-            order_id=order.id,
+            order_id=order_id,
             sku=item.sku,
             product_slug=item.product_slug,
             name=item.name,
@@ -109,18 +194,42 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
         )
         session.add(db_item)
         order_items.append(db_item)
+    return order_items
 
-    session.add(OrderEvent(order_id=order.id, event_type="created", event_data={"total_mad": total_mad}))
-    await session.commit()
-    await session.refresh(order)
 
-    order_payload = _order_payload(order, order_items)
-
+async def _sync_sheet(
+    session: AsyncSession, order: Order, order_payload: dict, *, is_update: bool
+) -> None:
     try:
-        await sync_order_to_sheet(order_payload)
-        session.add(OrderEvent(order_id=order.id, event_type="sheet_synced", event_data={}))
+        if is_update:
+            await sync_order_update_to_sheet(order_payload)
+            event_type = "sheet_updated"
+        else:
+            await sync_order_to_sheet(order_payload)
+            event_type = "sheet_synced"
+        session.add(OrderEvent(order_id=order.id, event_type=event_type, event_data={}))
     except Exception as exc:  # noqa: BLE001
-        session.add(OrderEvent(order_id=order.id, event_type="sheet_sync_failed", event_data={"error": str(exc)}))
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="sheet_sync_failed",
+                event_data={"error": str(exc), "is_update": is_update},
+            )
+        )
+    await session.commit()
+
+
+async def _send_capi_once(
+    session: AsyncSession, order: Order, order_payload: dict, phone: dict
+) -> None:
+    has_capi = await session.scalar(
+        select(OrderEvent.id).where(
+            OrderEvent.order_id == order.id,
+            OrderEvent.event_type == "capi_sent",
+        )
+    )
+    if has_capi:
+        return
 
     capi_results = await send_purchase_events(order_payload, phone)
     for result in capi_results:
@@ -141,12 +250,12 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
             OrderEvent(
                 order_id=order.id,
                 event_type="capi_sent",
-                event_data={"results": [{k: v for k, v in r.items() if k != "payload"} for r in capi_results]},
+                event_data={
+                    "results": [{k: v for k, v in r.items() if k != "payload"} for r in capi_results]
+                },
             )
         )
     await session.commit()
-
-    return order
 
 
 async def update_order_status(
@@ -229,6 +338,7 @@ def _order_payload(order: Order, items: list[OrderItem]) -> dict:
         for item in items_payload
     )
     created_at = order.created_at or datetime.now(tz=timezone.utc)
+    sheet_status = "upsell en cours" if order.status == "upsell_pending" else ""
 
     return {
         "order_number": order.order_number,
@@ -269,5 +379,5 @@ def _order_payload(order: Order, items: list[OrderItem]) -> dict:
         "sheet_quantity": "/".join(str(item["quantity"]) for item in items_payload),
         "sheet_total_price": order.total_mad,
         "sheet_currency": "MAD",
-        "sheet_status": "",
+        "sheet_status": sheet_status,
     }

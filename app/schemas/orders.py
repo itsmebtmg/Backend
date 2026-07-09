@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -5,7 +7,7 @@ class CustomerIn(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     phone: str = Field(min_length=8, max_length=32)
     city: str = Field(default="Non précisée", min_length=2, max_length=80)
-    address: str = Field(min_length=6, max_length=300)
+    address: str = Field(min_length=1, max_length=300)
 
 
 class OrderItemIn(BaseModel):
@@ -41,6 +43,9 @@ class OrderCreate(BaseModel):
     items: list[OrderItemIn] = Field(min_length=1)
     offer: OfferIn = Field(default_factory=OfferIn)
     tracking: TrackingIn = Field(default_factory=TrackingIn)
+    # upsell_pending: base order saved while customer sees upsell (abandonment capture)
+    # final: checkout complete — updates the same event_id row, fires pixels once
+    checkout_phase: Literal["upsell_pending", "final"] = "final"
 
 
 class OrderCreateResponse(BaseModel):
