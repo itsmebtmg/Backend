@@ -73,6 +73,7 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
                     func.count().filter(Order.is_valid_ma.is_(True)),
                     func.coalesce(func.sum(Order.total_mad), 0),
                     func.count().filter(Order.status.in_(CONFIRMED_LIKE_STATUSES)),
+                    func.count().filter(Order.status == "whatsapp_confirmed"),
                     func.count().filter(Order.status == "canceled"),
                     func.count().filter(Order.status == "no_answer"),
                     func.count().filter(Order.upsell_accepted.is_(True)),
@@ -84,6 +85,7 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
             valid_orders,
             revenue_mad,
             confirmed_orders,
+            whatsapp_confirmed_orders,
             canceled_orders,
             no_answer_orders,
             upsell_orders,
@@ -103,7 +105,7 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
             )
         ).one()
         orders, revenue_mad, canceled_orders, no_answer_orders, upsell_orders = fallback
-        valid_orders, confirmed_orders = 0, 0
+        valid_orders, confirmed_orders, whatsapp_confirmed_orders = 0, 0, 0
 
     if has_shipments:
         shipment_row = (
@@ -172,6 +174,7 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
     delivered_plus_returned = delivered_orders + returned_orders
     conversion_rate = (valid_orders / clicks * 100) if clicks else 0.0
     confirmation_rate = (confirmed_orders / orders * 100) if orders else 0.0
+    whatsapp_preconfirm_rate = (whatsapp_confirmed_orders / orders * 100) if orders else 0.0
     delivery_rate = (delivered_orders / delivered_plus_returned * 100) if delivered_plus_returned else 0.0
     upsell_rate = (upsell_orders / orders * 100) if orders else 0.0
     aov_mad = (revenue_mad / orders) if orders else 0.0
@@ -188,6 +191,8 @@ async def get_summary(session: AsyncSession, date_from: date, date_to: date) -> 
         aov_mad=round(aov_mad, 2),
         conversion_rate=round(conversion_rate, 2),
         confirmation_rate=round(confirmation_rate, 2),
+        whatsapp_confirmed_orders=whatsapp_confirmed_orders,
+        whatsapp_preconfirm_rate=round(whatsapp_preconfirm_rate, 2),
         delivery_rate=round(delivery_rate, 2),
         upsell_rate=round(upsell_rate, 2),
         confirmed_orders=confirmed_orders,

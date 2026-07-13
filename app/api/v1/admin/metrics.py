@@ -49,6 +49,8 @@ async def summary(
             delivery_rate=0,
             upsell_rate=0,
             confirmed_orders=0,
+            whatsapp_confirmed_orders=0,
+            whatsapp_preconfirm_rate=0,
             canceled_orders=0,
             no_answer_orders=0,
             delivered_orders=0,

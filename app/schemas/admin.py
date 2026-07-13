@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 ORDER_STATUSES = (
     "new",
     "upsell_pending",
+    "whatsapp_confirmed",
     "confirmed",
     "no_answer",
     "postponed",
@@ -65,6 +66,8 @@ class MetricsSummaryOut(BaseModel):
     upsell_rate: float
 
     confirmed_orders: int
+    whatsapp_confirmed_orders: int
+    whatsapp_preconfirm_rate: float
     canceled_orders: int
     no_answer_orders: int
     delivered_orders: int

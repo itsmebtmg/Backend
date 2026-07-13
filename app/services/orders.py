@@ -3,13 +3,14 @@ import unicodedata
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import Order, OrderEvent, OrderItem, TrackingEvent
-from app.schemas.orders import OrderCreate
+from app.schemas.orders import OrderCreate, CustomerIn, OrderItemIn, OfferIn
 from app.services import geo
+from app.services.n8n_notify import build_n8n_order_payload, is_whatsapp_upsell_eligible, notify_n8n_order
 from app.services.offers import validate_and_price_order
 from app.services.phone import InvalidMoroccanPhone, normalize_moroccan_phone
 from app.services.sheets import sync_order_to_sheet, sync_order_update_to_sheet
@@ -32,6 +33,17 @@ SHEET_STATUS_MAP: dict[str, str] = {
     "double": "canceled",
     "annule": "canceled",
     "rappel": "postponed",
+    "confirmed by whatsapp": "whatsapp_confirmed",
+    "upsell pack on whatsapp": "whatsapp_confirmed",
+    "canceled by whatsapp": "canceled",
+    "modify by whatsapp": "new",
+}
+
+WHATSAPP_SHEET_LABELS = {
+    "confirm": "CONFIRMED BY WhatsApp",
+    "cancel": "CANCELED BY WhatsApp",
+    "modify": "MODIFY BY WhatsApp",
+    "upsell_accept": "UPSELL PACK ON WHATSAPP",
 }
 
 
@@ -121,6 +133,7 @@ async def create_order(session: AsyncSession, payload: OrderCreate, request: Req
 
     if phase == "final":
         await _send_capi_once(session, order, order_payload, phone)
+        await _notify_n8n_once(session, order, order_items)
 
     return order
 
@@ -173,6 +186,7 @@ async def _finalize_order(
     order_payload = _order_payload(order, order_items)
     await _sync_sheet(session, order, order_payload, is_update=True)
     await _send_capi_once(session, order, order_payload, phone)
+    await _notify_n8n_once(session, order, order_items)
 
     return order
 
@@ -256,6 +270,216 @@ async def _send_capi_once(
             )
         )
     await session.commit()
+
+
+async def _notify_n8n_once(
+    session: AsyncSession, order: Order, items: list[OrderItem]
+) -> None:
+    has_n8n = await session.scalar(
+        select(OrderEvent.id).where(
+            OrderEvent.order_id == order.id,
+            OrderEvent.event_type == "n8n_sent",
+        )
+    )
+    if has_n8n:
+        return
+
+    payload = build_n8n_order_payload(order, items)
+    try:
+        await notify_n8n_order(payload)
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="n8n_sent",
+                event_data={"order_number": order.order_number},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="n8n_failed",
+                event_data={"error": str(exc)},
+            )
+        )
+    await session.commit()
+
+
+async def _sync_sheet_status(
+    session: AsyncSession, order: Order, items: list[OrderItem], sheet_status: str
+) -> None:
+    payload = _order_payload(order, items)
+    payload["sheet_status"] = sheet_status
+    try:
+        await sync_order_update_to_sheet(payload)
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="sheet_updated",
+                event_data={"sheet_status": sheet_status, "source": "whatsapp"},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="sheet_sync_failed",
+                event_data={"error": str(exc), "sheet_status": sheet_status},
+            )
+        )
+    await session.commit()
+
+
+async def apply_whatsapp_status(
+    session: AsyncSession, order_number: str, action: str
+) -> Order:
+    order = await session.scalar(
+        select(Order).options(selectinload(Order.items)).where(Order.order_number == order_number)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    if action == "confirm":
+        if order.status in {"canceled", "confirmed", "delivered", "returned"}:
+            return order
+        order.status = "whatsapp_confirmed"
+        sheet_label = WHATSAPP_SHEET_LABELS["confirm"]
+        event_type = "whatsapp_confirmed"
+    elif action == "cancel":
+        if order.status in {"canceled", "delivered", "returned"}:
+            return order
+        order.status = "canceled"
+        sheet_label = WHATSAPP_SHEET_LABELS["cancel"]
+        event_type = "whatsapp_canceled"
+    elif action == "modify":
+        sheet_label = WHATSAPP_SHEET_LABELS["modify"]
+        event_type = "whatsapp_modify"
+    else:
+        raise HTTPException(status_code=422, detail="invalid_whatsapp_action")
+
+    order.notes = f"WhatsApp: {action}"
+    session.add(
+        OrderEvent(
+            order_id=order.id,
+            event_type=event_type,
+            event_data={"action": action, "sheet_status": sheet_label},
+        )
+    )
+    await session.commit()
+    await session.refresh(order)
+
+    await _sync_sheet_status(session, order, order.items, sheet_label)
+    return order
+
+
+async def apply_whatsapp_upsell(session: AsyncSession, order_number: str, *, accepted: bool) -> Order:
+    order = await session.scalar(
+        select(Order).options(selectinload(Order.items)).where(Order.order_number == order_number)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    if not accepted:
+        session.add(
+            OrderEvent(
+                order_id=order.id,
+                event_type="whatsapp_upsell_declined",
+                event_data={},
+            )
+        )
+        await session.commit()
+        await session.refresh(order)
+        return order
+
+    if not is_whatsapp_upsell_eligible(order, order.items):
+        raise HTTPException(status_code=422, detail="whatsapp_upsell_not_eligible")
+
+    lumea = order.items[0]
+    upsell_payload = OrderCreate(
+        event_id=order.event_id,
+        customer=CustomerIn(
+            name=order.customer_name,
+            phone=order.phone_local,
+            city=order.city,
+            address=order.address,
+        ),
+        items=[
+            OrderItemIn(
+                sku=lumea.sku,
+                product_slug=lumea.product_slug,
+                name=lumea.name,
+                quantity=lumea.quantity,
+                unit_price_mad=239,
+            ),
+            OrderItemIn(
+                sku="SOLYRA_PURE_200ML",
+                product_slug="solyra-pure",
+                name="Solyra Pure Gel Nettoyant",
+                quantity=1,
+                unit_price_mad=110,
+            ),
+            OrderItemIn(
+                sku="SUN_PROTECT_PLUS_50ML",
+                product_slug="sun-protect-plus",
+                name="Sun Protect+ SPF50",
+                quantity=1,
+                unit_price_mad=0,
+                is_free_gift=True,
+            ),
+        ],
+        offer=OfferIn(code="LUMEA_UPSELL_PROTOCOL", upsell_accepted=True),
+        checkout_phase="final",
+    )
+    items, subtotal_mad, discount_mad, total_mad = validate_and_price_order(upsell_payload)
+
+    order.subtotal_mad = subtotal_mad
+    order.discount_mad = discount_mad
+    order.total_mad = total_mad
+    order.upsell_accepted = True
+    if order.status == "new":
+        order.status = "whatsapp_confirmed"
+
+    await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+    order_items = _build_order_items(session, order.id, items)
+    session.add(
+        OrderEvent(
+            order_id=order.id,
+            event_type="whatsapp_upsell_accepted",
+            event_data={"total_mad": total_mad},
+        )
+    )
+    await session.commit()
+    await session.refresh(order)
+
+    sheet_label = WHATSAPP_SHEET_LABELS["upsell_accept"]
+    await _sync_sheet_status(session, order, order_items, sheet_label)
+    return order
+
+
+async def lookup_order_by_phone(session: AsyncSession, phone_raw: str) -> Order | None:
+    """Find the most recent open order for a WhatsApp reply (E.164 or local 06...)."""
+    try:
+        phone = normalize_moroccan_phone(phone_raw)
+    except InvalidMoroccanPhone:
+        digits = "".join(ch for ch in phone_raw if ch.isdigit())
+        phone = {"local": phone_raw, "e164": phone_raw, "digits_international": digits}
+
+    open_statuses = ("new", "whatsapp_confirmed", "upsell_pending")
+    order = await session.scalar(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(
+            Order.status.in_(open_statuses),
+            or_(
+                Order.phone_local == phone["local"],
+                Order.phone_e164 == phone["e164"],
+                Order.phone_digits == phone["digits_international"],
+            ),
+        )
+        .order_by(Order.created_at.desc())
+        .limit(1)
+    )
+    return order
 
 
 async def update_order_status(

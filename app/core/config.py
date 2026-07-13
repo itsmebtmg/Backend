@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     enable_capi: bool = True
     enable_google_sheets: bool = True
+    enable_n8n_whatsapp: bool = False
+    n8n_order_webhook_url: str | None = None
     tracking_debug: bool = False
 
     rate_limit_orders_per_ip_per_hour: int = 10

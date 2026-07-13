@@ -6,8 +6,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.schemas.orders import OrderCreate, OrderCreateResponse, OrderStatusUpdate, SheetStatusUpdate
-from app.services.orders import apply_sheet_status, create_order, update_order_status
+from app.schemas.orders import (
+    OrderCreate,
+    OrderCreateResponse,
+    OrderStatusUpdate,
+    SheetStatusUpdate,
+    WhatsAppStatusUpdate,
+    WhatsAppUpsellUpdate,
+    WhatsAppLookupIn,
+)
+from app.services.orders import (
+    apply_sheet_status,
+    apply_whatsapp_status,
+    apply_whatsapp_upsell,
+    create_order,
+    lookup_order_by_phone,
+    update_order_status,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,3 +64,55 @@ async def sheet_status_webhook(payload: SheetStatusUpdate, session: DbSession) -
 
     order = await apply_sheet_status(session, payload.order_id, payload.status)
     return {"ok": True, "order_number": order.order_number, "status": order.status}
+
+
+def _check_webhook_secret(secret: str | None) -> None:
+    if settings.order_webhook_secret:
+        if secret != settings.order_webhook_secret:
+            raise HTTPException(status_code=401, detail="invalid_secret")
+    else:
+        log.warning("ORDER_WEBHOOK_SECRET is not set — webhook is unauthenticated")
+
+
+@router.post("/whatsapp-status")
+async def whatsapp_status_webhook(payload: WhatsAppStatusUpdate, session: DbSession) -> dict:
+    """Called by n8n when a customer taps confirm/cancel/modify on WhatsApp."""
+    _check_webhook_secret(payload.secret)
+    order = await apply_whatsapp_status(session, payload.order_id, payload.action)
+    return {
+        "ok": True,
+        "order_number": order.order_number,
+        "status": order.status,
+        "whatsapp_upsell_eligible": is_whatsapp_upsell_eligible(order, order.items),
+    }
+
+
+@router.post("/whatsapp-upsell")
+async def whatsapp_upsell_webhook(payload: WhatsAppUpsellUpdate, session: DbSession) -> dict:
+    """Called by n8n when a Lumea+-only customer accepts/declines the WhatsApp upsell."""
+    _check_webhook_secret(payload.secret)
+    order = await apply_whatsapp_upsell(session, payload.order_id, accepted=payload.accepted)
+    return {
+        "ok": True,
+        "order_number": order.order_number,
+        "status": order.status,
+        "total_mad": order.total_mad,
+        "upsell_accepted": order.upsell_accepted,
+    }
+
+
+@router.post("/whatsapp-lookup")
+async def whatsapp_lookup_webhook(payload: WhatsAppLookupIn, session: DbSession) -> dict:
+    """Resolve order_number from customer phone (template buttons use static payloads)."""
+    _check_webhook_secret(payload.secret)
+    order = await lookup_order_by_phone(session, payload.phone)
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+    return {
+        "ok": True,
+        "order_number": order.order_number,
+        "status": order.status,
+        "total_mad": order.total_mad,
+        "upsell_accepted": order.upsell_accepted,
+        "whatsapp_upsell_eligible": is_whatsapp_upsell_eligible(order, order.items),
+    }

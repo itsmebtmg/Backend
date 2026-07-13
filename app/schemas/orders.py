@@ -69,6 +69,29 @@ class SheetStatusUpdate(BaseModel):
     secret: str | None = None
 
 
+class WhatsAppStatusUpdate(BaseModel):
+    """Called by n8n when a customer taps a confirmation button on WhatsApp."""
+
+    order_id: str = Field(min_length=1, max_length=64)
+    action: Literal["confirm", "cancel", "modify"]
+    secret: str | None = None
+
+
+class WhatsAppUpsellUpdate(BaseModel):
+    """Called by n8n when a Lumea+-only customer accepts/declines the WhatsApp upsell."""
+
+    order_id: str = Field(min_length=1, max_length=64)
+    accepted: bool
+    secret: str | None = None
+
+
+class WhatsAppLookupIn(BaseModel):
+    """Resolve the active order for an inbound WhatsApp reply (buttons use static payloads)."""
+
+    phone: str = Field(min_length=8, max_length=32)
+    secret: str | None = None
+
+
 class HealthResponse(BaseModel):
     ok: bool = True
     service: str = "solyra-api"
