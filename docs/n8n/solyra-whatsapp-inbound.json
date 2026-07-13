@@ -1,0 +1,266 @@
+{
+  "name": "Solyra WhatsApp Inbound (Darija)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET,POST",
+        "path": "solyra-whatsapp-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "inbound-webhook",
+      "name": "Meta Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "solyra-whatsapp-inbound"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "verify-get",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-verify",
+      "name": "Is Meta Verify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "verify-response",
+      "name": "Return Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [640, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst entry = body.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value || {};\nconst msg = value.messages?.[0];\nif (!msg) {\n  return [{ json: { skip: true } }];\n}\nconst from = msg.from;\nlet payload = '';\nif (msg.type === 'button' && msg.button) {\n  payload = msg.button.payload || msg.button.text || '';\n} else if (msg.type === 'interactive' && msg.interactive?.button_reply) {\n  payload = msg.interactive.button_reply.id || msg.interactive.button_reply.title || '';\n}\nconst ctx = value.messages?.[0]?.context;\nconst orderHint = ctx?.referred_product?.product_retailer_id || '';\nreturn [{\n  json: {\n    skip: false,\n    from,\n    payload: String(payload).toLowerCase(),\n    msg_type: msg.type,\n    raw: msg\n  }\n}];"
+      },
+      "id": "parse-inbound",
+      "name": "Parse Button Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "not-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-message",
+      "name": "Has Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 400]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload }}",
+                    "rightValue": "wa_confirm",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "confirm"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload }}",
+                    "rightValue": "wa_cancel",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancel"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload }}",
+                    "rightValue": "wa_modify",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "modify"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload }}",
+                    "rightValue": "wa_upsell_yes",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "upsell_yes"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload }}",
+                    "rightValue": "wa_upsell_no",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "upsell_no"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "route-button",
+      "name": "Route Button",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1080, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SOLYRA_API_URL }}/v1/orders/whatsapp-status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"order_id\": \"{{ $('Lookup Order').item.json.order_number }}\",\n  \"action\": \"{{ $json.action }}\",\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
+        "options": {}
+      },
+      "id": "api-status",
+      "name": "Solyra WhatsApp Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SOLYRA_API_URL }}/v1/orders/whatsapp-upsell",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"order_id\": \"{{ $('Lookup Order').item.json.order_number }}\",\n  \"accepted\": {{ $json.accepted }},\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
+        "options": {}
+      },
+      "id": "api-upsell",
+      "name": "Solyra WhatsApp Upsell",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": { "responseCode": 200 }
+      },
+      "id": "ack-meta",
+      "name": "Ack Meta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1960, 400]
+    },
+    {
+      "parameters": {
+        "content": "## IMPORTANT — after import\n\n1. Add a **Lookup Order** node before API calls (query Postgres or HTTP GET admin by phone) — map `from` phone → `order_number`.\n2. Wire Route Button outputs to Set nodes that set `action` (confirm/cancel/modify) or `accepted` (true/false).\n3. After confirm + `whatsapp_upsell_eligible:true`, send session upsell message (see whatsapp-setup.md).\n4. Set all `$env.*` variables in n8n.\n\nThe inbound flow needs order lookup by phone — add your DB node or a new backend endpoint `GET /v1/orders/by-phone/{phone}` if needed.",
+        "height": 320,
+        "width": 480
+      },
+      "id": "setup-note",
+      "name": "Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 560]
+    }
+  ],
+  "connections": {
+    "Meta Webhook": {
+      "main": [[{ "node": "Is Meta Verify?", "type": "main", "index": 0 }]]
+    },
+    "Is Meta Verify?": {
+      "main": [
+        [{ "node": "Return Challenge", "type": "main", "index": 0 }],
+        [{ "node": "Parse Button Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Button Reply": {
+      "main": [[{ "node": "Has Message?", "type": "main", "index": 0 }]]
+    },
+    "Has Message?": {
+      "main": [
+        [{ "node": "Route Button", "type": "main", "index": 0 }],
+        [{ "node": "Ack Meta", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateCredsSetupCompleted": false }
+}
