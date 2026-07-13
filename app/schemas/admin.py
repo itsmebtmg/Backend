@@ -83,6 +83,13 @@ class MetricsTimeseriesOut(BaseModel):
     points: list[DailyPointOut]
 
 
+class LiveVisitorsOut(BaseModel):
+    live_now: int
+    live_valid_ma: int
+    window_minutes: int = 5
+    as_of: datetime
+
+
 class OrderItemOut(BaseModel):
     sku: str
     product_slug: str

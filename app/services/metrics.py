@@ -10,11 +10,17 @@ import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Order, OrderItem, Shipment, SiteVisit
-from app.schemas.admin import BreakdownItemOut, DailyPointOut, MetricsSummaryOut, MetricsTimeseriesOut
+from app.schemas.admin import (
+    BreakdownItemOut,
+    DailyPointOut,
+    LiveVisitorsOut,
+    MetricsSummaryOut,
+    MetricsTimeseriesOut,
+)
 
 log = logging.getLogger(__name__)
 
@@ -255,6 +261,42 @@ async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) 
         current += timedelta(days=1)
 
     return MetricsTimeseriesOut(date_from=date_from, date_to=date_to, points=points)
+
+
+LIVE_VISITOR_WINDOW_MINUTES = 5
+
+
+async def get_live_visitors(
+    session: AsyncSession, *, window_minutes: int = LIVE_VISITOR_WINDOW_MINUTES
+) -> LiveVisitorsOut:
+    """Count distinct visitors with any storefront activity in the last N minutes."""
+    now = datetime.now(tz=timezone.utc)
+    cutoff = now - timedelta(minutes=window_minutes)
+
+    if not await _table_exists(session, "site_visits"):
+        return LiveVisitorsOut(live_now=0, live_valid_ma=0, window_minutes=window_minutes, as_of=now)
+
+    visitor_key = func.coalesce(SiteVisit.session_id, func.host(SiteVisit.client_ip))
+    valid_visitor_key = case((SiteVisit.is_valid_ma.is_(True), visitor_key), else_=None)
+
+    row = (
+        await session.execute(
+            select(
+                func.count(func.distinct(visitor_key)),
+                func.count(func.distinct(valid_visitor_key)),
+            ).where(
+                SiteVisit.created_at >= cutoff,
+                SiteVisit.event_type.in_(("page_view", "cta_click", "heartbeat")),
+            )
+        )
+    ).one()
+
+    return LiveVisitorsOut(
+        live_now=int(row[0] or 0),
+        live_valid_ma=int(row[1] or 0),
+        window_minutes=window_minutes,
+        as_of=now,
+    )
 
 
 def _as_date(value: date | datetime) -> date:

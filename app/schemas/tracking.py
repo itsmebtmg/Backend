@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class VisitIn(BaseModel):
-    event_type: str = Field(pattern="^(page_view|cta_click)$")
+    event_type: str = Field(pattern="^(page_view|cta_click|heartbeat)$")
     session_id: str | None = Field(default=None, max_length=80)
     path: str | None = None
     source_page: str | None = None

@@ -1,12 +1,12 @@
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.schemas.admin import MetricsSummaryOut, MetricsTimeseriesOut
+from app.schemas.admin import LiveVisitorsOut, MetricsSummaryOut, MetricsTimeseriesOut
 from app.services import metrics as metrics_service
 from app.services.auth import AdminSession, require_admin
 
@@ -75,3 +75,17 @@ async def timeseries(
     except Exception as exc:
         log.exception("metrics timeseries failed")
         return MetricsTimeseriesOut(date_from=resolved_from, date_to=resolved_to, points=[])
+
+
+@router.get("/live", response_model=LiveVisitorsOut)
+async def live_visitors(session: DbSession, _admin: Admin) -> LiveVisitorsOut:
+    try:
+        return await metrics_service.get_live_visitors(session)
+    except Exception:
+        log.exception("live visitors failed")
+        return LiveVisitorsOut(
+            live_now=0,
+            live_valid_ma=0,
+            window_minutes=metrics_service.LIVE_VISITOR_WINDOW_MINUTES,
+            as_of=datetime.now(tz=timezone.utc),
+        )
