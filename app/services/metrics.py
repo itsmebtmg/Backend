@@ -208,6 +208,7 @@ async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) 
     start, end = _range_bounds(date_from, date_to)
 
     has_visits = await _table_exists(session, "site_visits")
+    visitor_key = func.coalesce(SiteVisit.session_id, func.host(SiteVisit.client_ip))
     if has_visits:
         click_rows = (
             await session.execute(
@@ -220,8 +221,22 @@ async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) 
                 .group_by(func.date(SiteVisit.created_at))
             )
         ).all()
+        session_rows = (
+            await session.execute(
+                select(
+                    func.date(SiteVisit.created_at),
+                    func.count(func.distinct(visitor_key)),
+                )
+                .where(
+                    SiteVisit.created_at.between(start, end),
+                    SiteVisit.event_type.in_(("page_view", "cta_click", "heartbeat")),
+                )
+                .group_by(func.date(SiteVisit.created_at))
+            )
+        ).all()
     else:
         click_rows = []
+        session_rows = []
 
     order_rows = (
         await session.execute(
@@ -239,6 +254,10 @@ async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) 
     for d, page_views, cta_clicks in click_rows:
         clicks_by_day[_as_date(d)] = (page_views, cta_clicks)
 
+    sessions_by_day: dict[date, int] = defaultdict(int)
+    for d, sessions in session_rows:
+        sessions_by_day[_as_date(d)] = int(sessions or 0)
+
     orders_by_day: dict[date, tuple[int, int]] = defaultdict(lambda: (0, 0))
     for d, count, revenue in order_rows:
         orders_by_day[_as_date(d)] = (count, int(revenue))
@@ -254,6 +273,7 @@ async def get_timeseries(session: AsyncSession, date_from: date, date_to: date) 
                 clicks=page_views + cta_clicks,
                 page_views=page_views,
                 cta_clicks=cta_clicks,
+                sessions=sessions_by_day[current],
                 orders=orders,
                 revenue_mad=revenue_mad,
             )

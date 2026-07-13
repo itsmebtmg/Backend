@@ -36,6 +36,7 @@ class DailyPointOut(BaseModel):
     clicks: int
     page_views: int
     cta_clicks: int
+    sessions: int
     orders: int
     revenue_mad: int
 

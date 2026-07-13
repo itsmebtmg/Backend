@@ -236,3 +236,12 @@ async def upsert_shipment(session: AsyncSession, order_number: str, payload: Shi
         delivered_at=shipment.delivered_at,
         updated_at=shipment.updated_at,
     )
+
+
+async def delete_order(session: AsyncSession, order_number: str) -> None:
+    order = await session.scalar(select(Order).where(Order.order_number == order_number))
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    await session.delete(order)
+    await session.commit()

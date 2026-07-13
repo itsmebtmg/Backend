@@ -64,3 +64,9 @@ async def set_order_shipment(
     order_number: str, payload: ShipmentUpdateIn, session: DbSession, _admin: Admin
 ) -> ShipmentOut:
     return await admin_orders.upsert_shipment(session, order_number, payload)
+
+
+@router.delete("/{order_number}")
+async def remove_order(order_number: str, session: DbSession, _admin: Admin) -> dict:
+    await admin_orders.delete_order(session, order_number)
+    return {"ok": True, "order_number": order_number}
