@@ -17,6 +17,16 @@
     },
     {
       "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst order = raw.body && typeof raw.body === 'object' ? raw.body : raw;\nconst phone = String(order.phone_e164 || order.phone_local || '').replace(/\\D/g, '');\nif (!phone) {\n  throw new Error('missing_phone_e164');\n}\nconst templateName = $env.META_TEMPLATE_NAME || 'hello_world';\nconst templateLang = $env.META_TEMPLATE_LANG || 'en_US';\nconst payload = {\n  messaging_product: 'whatsapp',\n  to: phone,\n  type: 'template',\n  template: {\n    name: templateName,\n    language: { code: templateLang }\n  }\n};\nif (templateName !== 'hello_world') {\n  payload.template.components = [\n    {\n      type: 'body',\n      parameters: [\n        { type: 'text', text: String(order.customer_name || '') },\n        { type: 'text', text: String(order.order_number || '') },\n        { type: 'text', text: String(order.items_text || '') },\n        { type: 'text', text: String(order.total_mad || '') }\n      ]\n    },\n    {\n      type: 'button',\n      sub_type: 'quick_reply',\n      index: '0',\n      parameters: [{ type: 'payload', payload: 'wa_confirm' }]\n    },\n    {\n      type: 'button',\n      sub_type: 'quick_reply',\n      index: '1',\n      parameters: [{ type: 'payload', payload: 'wa_cancel' }]\n    },\n    {\n      type: 'button',\n      sub_type: 'quick_reply',\n      index: '2',\n      parameters: [{ type: 'payload', payload: 'wa_modify' }]\n    }\n  ];\n}\nreturn [{ json: { order, meta_payload: payload, phone, templateName } }];"
+      },
+      "id": "c3d4e5f6-build-payload",
+      "name": "Build Meta Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "=https://graph.facebook.com/v21.0/{{ $env.META_PHONE_NUMBER_ID }}/messages",
         "sendHeaders": true,
@@ -34,14 +44,14 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.body.phone_e164.replace('+', '') }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"{{ $env.META_TEMPLATE_NAME }}\",\n    \"language\": { \"code\": \"{{ $env.META_TEMPLATE_LANG || 'ar' }}\" },\n    \"components\": [\n      {\n        \"type\": \"body\",\n        \"parameters\": [\n          { \"type\": \"text\", \"text\": \"{{ $json.body.customer_name }}\" },\n          { \"type\": \"text\", \"text\": \"{{ $json.body.order_number }}\" },\n          { \"type\": \"text\", \"text\": \"{{ $json.body.items_text }}\" },\n          { \"type\": \"text\", \"text\": \"{{ $json.body.total_mad }}\" }\n        ]\n      },\n      {\n        \"type\": \"button\",\n        \"sub_type\": \"quick_reply\",\n        \"index\": \"0\",\n        \"parameters\": [{ \"type\": \"payload\", \"payload\": \"wa_confirm\" }]\n      },\n      {\n        \"type\": \"button\",\n        \"sub_type\": \"quick_reply\",\n        \"index\": \"1\",\n        \"parameters\": [{ \"type\": \"payload\", \"payload\": \"wa_cancel\" }]\n      },\n      {\n        \"type\": \"button\",\n        \"sub_type\": \"quick_reply\",\n        \"index\": \"2\",\n        \"parameters\": [{ \"type\": \"payload\", \"payload\": \"wa_modify\" }]\n      }\n    ]\n  }\n}",
+        "jsonBody": "={{ JSON.stringify($json.meta_payload) }}",
         "options": {}
       },
       "id": "b2c3d4e5-send-template",
-      "name": "Send Darija Template",
+      "name": "Send WhatsApp Template",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 300]
+      "position": [720, 300]
     }
   ],
   "connections": {
@@ -49,7 +59,18 @@
       "main": [
         [
           {
-            "node": "Send Darija Template",
+            "node": "Build Meta Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Meta Payload": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template",
             "type": "main",
             "index": 0
           }

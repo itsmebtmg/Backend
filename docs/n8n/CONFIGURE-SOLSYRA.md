@@ -35,10 +35,12 @@ Configured for **automation.solyra.ma** on 2026-07-13.
 **Action required:** Add manually in EasyPanel → n8n → Environment:
 
 ```
-META_ACCESS_TOKEN=<click "Generate access token" in Meta API Setup>
+META_ACCESS_TOKEN=<paste token from Meta API Setup — NO angle brackets>
 ```
 
-Use the **same** System User permanent token with `whatsapp_business_messaging` permission.
+⚠️ Paste the raw token only (starts with `EAA…`). Do **not** include `<` or `>`.
+
+Use the token from **Generate access token** on the WhatsApp API Setup page (expires ~24h). For production, create a **System User** permanent token with `whatsapp_business_messaging`.
 
 Redeploy **n8n** after adding the token.
 
@@ -55,8 +57,8 @@ Redeploy **n8n** after adding the token.
 1. Open https://automation.solyra.ma/home/workflows
 2. **Import** → `solyra-order-to-whatsapp.json`
 3. **Import** → `solyra-whatsapp-inbound.json`
-4. **Activate** both workflows
-5. Inbound workflow is fully wired (lookup → route → API → upsell → follow-up)
+4. **Activate** both workflows (inbound is often left inactive — turn it on)
+5. Re-import `solyra-order-to-whatsapp.json` if you still have the old 2-node version (new version has **Build Meta Payload** for `hello_world` + Darija)
 
 ## Google Sheet — Status dropdown
 
