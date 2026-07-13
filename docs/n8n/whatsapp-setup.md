@@ -1,5 +1,8 @@
 # Solyra WhatsApp Order Confirmation (n8n + Meta Cloud API)
 
+**Your instance:** https://automation.solyra.ma  
+**Quick config:** [CONFIGURE-SOLSYRA.md](./CONFIGURE-SOLSYRA.md)
+
 Darija-only WhatsApp flow:
 
 1. Customer orders on solyra.ma → backend POSTs to n8n
