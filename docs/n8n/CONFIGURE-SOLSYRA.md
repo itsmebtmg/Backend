@@ -26,7 +26,7 @@ Configured for **automation.solyra.ma** on 2026-07-13.
 - `META_PHONE_NUMBER_ID=1192283630638261` ✓
 - `META_WABA_ID=1569571918147458` ✓
 - `SOLYRA_API_URL=https://api.solyra.ma` ✓
-- `SOLYRA_API_URL=https://api.solyra.ma`
+- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` ✓ (required for `$env` in workflow nodes)
 - `ORDER_WEBHOOK_SECRET` (same as backend)
 - `META_TEMPLATE_NAME=hello_world` (testing until Darija template approved)
 - `META_TEMPLATE_LANG=en_US`
