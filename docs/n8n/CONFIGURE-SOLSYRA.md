@@ -20,11 +20,12 @@ Configured for **automation.solyra.ma** on 2026-07-13.
 - `ENABLE_N8N_WHATSAPP=true`
 - `N8N_ORDER_WEBHOOK_URL=https://automation.solyra.ma/webhook/solyra-order-whatsapp`
 
-**Action required:** Redeploy **backend** on EasyPanel (latest code `ad93588`).
+**Action required:** Redeploy **backend** on EasyPanel (latest code `778ec42`).
 
 ### `solyra` → `n8n`
-- `META_PHONE_NUMBER_ID=1192283630638261`
-- `META_WABA_ID=1569571918147458`
+- `META_PHONE_NUMBER_ID=1192283630638261` ✓
+- `META_WABA_ID=1569571918147458` ✓
+- `SOLYRA_API_URL=https://api.solyra.ma` ✓
 - `SOLYRA_API_URL=https://api.solyra.ma`
 - `ORDER_WEBHOOK_SECRET` (same as backend)
 - `META_TEMPLATE_NAME=hello_world` (testing until Darija template approved)
@@ -55,7 +56,7 @@ Redeploy **n8n** after adding the token.
 2. **Import** → `solyra-order-to-whatsapp.json`
 3. **Import** → `solyra-whatsapp-inbound.json`
 4. **Activate** both workflows
-5. Open inbound workflow → finish wiring per sticky note (Lookup Order node)
+5. Inbound workflow is fully wired (lookup → route → API → upsell → follow-up)
 
 ## Google Sheet — Status dropdown
 

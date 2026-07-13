@@ -60,7 +60,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\nconst entry = body.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value || {};\nconst msg = value.messages?.[0];\nif (!msg) {\n  return [{ json: { skip: true } }];\n}\nconst from = msg.from;\nlet payload = '';\nif (msg.type === 'button' && msg.button) {\n  payload = msg.button.payload || msg.button.text || '';\n} else if (msg.type === 'interactive' && msg.interactive?.button_reply) {\n  payload = msg.interactive.button_reply.id || msg.interactive.button_reply.title || '';\n}\nconst ctx = value.messages?.[0]?.context;\nconst orderHint = ctx?.referred_product?.product_retailer_id || '';\nreturn [{\n  json: {\n    skip: false,\n    from,\n    payload: String(payload).toLowerCase(),\n    msg_type: msg.type,\n    raw: msg\n  }\n}];"
+        "jsCode": "const body = $input.first().json.body || {};\nconst entry = body.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value || {};\nconst msg = value.messages?.[0];\nif (!msg) {\n  return [{ json: { skip: true } }];\n}\nconst from = msg.from;\nlet payload = '';\nif (msg.type === 'button' && msg.button) {\n  payload = msg.button.payload || msg.button.text || '';\n} else if (msg.type === 'interactive' && msg.interactive?.button_reply) {\n  payload = msg.interactive.button_reply.id || msg.interactive.button_reply.title || '';\n}\nreturn [{\n  json: {\n    skip: false,\n    from,\n    payload: String(payload).toLowerCase(),\n    msg_type: msg.type,\n    raw: msg\n  }\n}];"
       },
       "id": "parse-inbound",
       "name": "Parse Button Reply",
@@ -96,6 +96,31 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [860, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SOLYRA_API_URL }}/v1/orders/whatsapp-lookup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"phone\": \"{{ $json.from }}\",\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
+        "options": {}
+      },
+      "id": "lookup-order",
+      "name": "Lookup Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const parse = $('Parse Button Reply').first().json;\nconst lookup = $input.first().json;\nreturn [{\n  json: {\n    from: parse.from,\n    payload: parse.payload,\n    order_number: lookup.order_number,\n    whatsapp_upsell_eligible: lookup.whatsapp_upsell_eligible,\n    status: lookup.status\n  }\n}];"
+      },
+      "id": "merge-context",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 400]
     },
     {
       "parameters": {
@@ -184,7 +209,92 @@
       "name": "Route Button",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
-      "position": [1080, 400]
+      "position": [1520, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "action", "value": "confirm", "type": "string" },
+            { "id": "a2", "name": "order_number", "value": "={{ $json.order_number }}", "type": "string" },
+            { "id": "a3", "name": "from", "value": "={{ $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-confirm",
+      "name": "Set Confirm",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 120]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "b1", "name": "action", "value": "cancel", "type": "string" },
+            { "id": "b2", "name": "order_number", "value": "={{ $json.order_number }}", "type": "string" },
+            { "id": "b3", "name": "from", "value": "={{ $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-cancel",
+      "name": "Set Cancel",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 280]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "c1", "name": "action", "value": "modify", "type": "string" },
+            { "id": "c2", "name": "order_number", "value": "={{ $json.order_number }}", "type": "string" },
+            { "id": "c3", "name": "from", "value": "={{ $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-modify",
+      "name": "Set Modify",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 440]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "d1", "name": "accepted", "value": true, "type": "boolean" },
+            { "id": "d2", "name": "order_number", "value": "={{ $json.order_number }}", "type": "string" },
+            { "id": "d3", "name": "from", "value": "={{ $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-upsell-yes",
+      "name": "Set Upsell Yes",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 600]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "e1", "name": "accepted", "value": false, "type": "boolean" },
+            { "id": "e2", "name": "order_number", "value": "={{ $json.order_number }}", "type": "string" },
+            { "id": "e3", "name": "from", "value": "={{ $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-upsell-no",
+      "name": "Set Upsell No",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 760]
     },
     {
       "parameters": {
@@ -192,14 +302,14 @@
         "url": "={{ $env.SOLYRA_API_URL }}/v1/orders/whatsapp-status",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"order_id\": \"{{ $('Lookup Order').item.json.order_number }}\",\n  \"action\": \"{{ $json.action }}\",\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
+        "jsonBody": "={\n  \"order_id\": \"{{ $json.order_number }}\",\n  \"action\": \"{{ $json.action }}\",\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
         "options": {}
       },
       "id": "api-status",
       "name": "Solyra WhatsApp Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, 200]
+      "position": [2000, 280]
     },
     {
       "parameters": {
@@ -207,14 +317,80 @@
         "url": "={{ $env.SOLYRA_API_URL }}/v1/orders/whatsapp-upsell",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"order_id\": \"{{ $('Lookup Order').item.json.order_number }}\",\n  \"accepted\": {{ $json.accepted }},\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
+        "jsonBody": "={\n  \"order_id\": \"{{ $json.order_number }}\",\n  \"accepted\": {{ $json.accepted }},\n  \"secret\": \"{{ $env.ORDER_WEBHOOK_SECRET }}\"\n}",
         "options": {}
       },
       "id": "api-upsell",
       "name": "Solyra WhatsApp Upsell",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, 520]
+      "position": [2000, 680]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "upsell-eligible",
+              "leftValue": "={{ $json.whatsapp_upsell_eligible }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-upsell",
+      "name": "Upsell Eligible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2240, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.META_PHONE_NUMBER_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.META_ACCESS_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Set Confirm').item.json.from }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": {\n      \"text\": \"Mezian! 🎉\\n\\n3endna 3rd exclusive lik:\\n➕ Solyra Pure (Gel) b +110 d.م\\n🎁 Sun Protect+ (Ecran) balash\\n\\nTotal jdid: 349 d.م (bdl 239 d.م)\\n\\nBghiti tzidhom?\"\n    },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"wa_upsell_yes\", \"title\": \"Iyyeh, zidhom\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"wa_upsell_no\", \"title\": \"La chokran\" } }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "send-upsell",
+      "name": "Send Upsell Msg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2480, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.META_PHONE_NUMBER_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.META_ACCESS_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.from || $('Set Confirm').item.json.from || $('Set Cancel').item.json.from || $('Set Modify').item.json.from || $('Set Upsell Yes').item.json.from || $('Set Upsell No').item.json.from }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"Chokran! Wa7ed l'agent dyal Solyra ghadi ytssel bik daba bach y2ekked l'adresse. 📞\\n\\nMa khllas walou daba — COD 3nd l'istilam.\"\n  }\n}",
+        "options": {}
+      },
+      "id": "send-followup",
+      "name": "Send Follow-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2720, 400]
     },
     {
       "parameters": {
@@ -226,19 +402,7 @@
       "name": "Ack Meta",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1960, 400]
-    },
-    {
-      "parameters": {
-        "content": "## IMPORTANT — after import\n\n1. Add a **Lookup Order** node before API calls (query Postgres or HTTP GET admin by phone) — map `from` phone → `order_number`.\n2. Wire Route Button outputs to Set nodes that set `action` (confirm/cancel/modify) or `accepted` (true/false).\n3. After confirm + `whatsapp_upsell_eligible:true`, send session upsell message (see whatsapp-setup.md).\n4. Set all `$env.*` variables in n8n.\n\nThe inbound flow needs order lookup by phone — add your DB node or a new backend endpoint `GET /v1/orders/by-phone/{phone}` if needed.",
-        "height": 320,
-        "width": 480
-      },
-      "id": "setup-note",
-      "name": "Setup Note",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [240, 560]
+      "position": [2960, 400]
     }
   ],
   "connections": {
@@ -256,9 +420,57 @@
     },
     "Has Message?": {
       "main": [
-        [{ "node": "Route Button", "type": "main", "index": 0 }],
+        [{ "node": "Lookup Order", "type": "main", "index": 0 }],
         [{ "node": "Ack Meta", "type": "main", "index": 0 }]
       ]
+    },
+    "Lookup Order": {
+      "main": [[{ "node": "Merge Context", "type": "main", "index": 0 }]]
+    },
+    "Merge Context": {
+      "main": [[{ "node": "Route Button", "type": "main", "index": 0 }]]
+    },
+    "Route Button": {
+      "main": [
+        [{ "node": "Set Confirm", "type": "main", "index": 0 }],
+        [{ "node": "Set Cancel", "type": "main", "index": 0 }],
+        [{ "node": "Set Modify", "type": "main", "index": 0 }],
+        [{ "node": "Set Upsell Yes", "type": "main", "index": 0 }],
+        [{ "node": "Set Upsell No", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Confirm": {
+      "main": [[{ "node": "Solyra WhatsApp Status", "type": "main", "index": 0 }]]
+    },
+    "Set Cancel": {
+      "main": [[{ "node": "Solyra WhatsApp Status", "type": "main", "index": 0 }]]
+    },
+    "Set Modify": {
+      "main": [[{ "node": "Solyra WhatsApp Status", "type": "main", "index": 0 }]]
+    },
+    "Set Upsell Yes": {
+      "main": [[{ "node": "Solyra WhatsApp Upsell", "type": "main", "index": 0 }]]
+    },
+    "Set Upsell No": {
+      "main": [[{ "node": "Solyra WhatsApp Upsell", "type": "main", "index": 0 }]]
+    },
+    "Solyra WhatsApp Status": {
+      "main": [[{ "node": "Upsell Eligible?", "type": "main", "index": 0 }]]
+    },
+    "Upsell Eligible?": {
+      "main": [
+        [{ "node": "Send Upsell Msg", "type": "main", "index": 0 }],
+        [{ "node": "Send Follow-up", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Upsell Msg": {
+      "main": [[{ "node": "Ack Meta", "type": "main", "index": 0 }]]
+    },
+    "Solyra WhatsApp Upsell": {
+      "main": [[{ "node": "Send Follow-up", "type": "main", "index": 0 }]]
+    },
+    "Send Follow-up": {
+      "main": [[{ "node": "Ack Meta", "type": "main", "index": 0 }]]
     }
   },
   "settings": { "executionOrder": "v1" },
