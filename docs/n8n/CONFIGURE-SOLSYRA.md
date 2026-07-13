@@ -18,7 +18,7 @@ Configured for **automation.solyra.ma** on 2026-07-13.
 
 ### `solyra` → `backend`
 - `ENABLE_N8N_WHATSAPP=true`
-- `N8N_ORDER_WEBHOOK_URL=https://automation.solyra.ma/webhook/solyra-order-whatsapp`
+- `N8N_ORDER_WEBHOOK_URL=http://solyra_n8n:5678/webhook/solyra-order-whatsapp` (internal — bypasses Cloudflare)
 
 **Action required:** Redeploy **backend** on EasyPanel (latest code `778ec42`).
 
